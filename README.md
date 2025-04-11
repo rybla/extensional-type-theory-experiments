@@ -1,7 +1,7 @@
 # extensional-type-theory-experiments
 
 Dependencies:
-- [bun.sh]
+- [bun](bun.sh)
 
 Usage:
 ```
