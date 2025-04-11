@@ -1,15 +1,11 @@
 # extensional-type-theory-experiments
 
-To install dependencies:
+Dependencies:
+- [bun.sh]
 
-```bash
+Usage:
+```
 bun install
+bun run build
+bun run test
 ```
-
-To run:
-
-```bash
-bun run index.ts
-```
-
-This project was created using `bun init` in bun v1.2.5. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
