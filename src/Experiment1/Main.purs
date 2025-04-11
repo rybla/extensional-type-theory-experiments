@@ -75,7 +75,7 @@ data Drv
 
 derive instance Generic Drv _
 
-_ShowDrv_metadata = true
+_ShowDrv_metadata = false
 
 instance Show Drv where
   show (VarDrv r x) = (if _ShowDrv_metadata then show r else "") <> show x
