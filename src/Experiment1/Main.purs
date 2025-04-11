@@ -191,9 +191,9 @@ var :: Var -> BuildDrv
 var x = do
   ctx <- ask
   ty <- lookup_Ctx x ctx.gamma # flip maybe (_.ty >>> pure) do
-    throwError_BuildM $ "variable " <> show x <> " is out-of-bounds"
+    throwError_BuildM $ "scope error: variable " <> show x <> " is out-of-bounds"
   ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
-    throwError_BuildM $ "variable " <> show x <> " is expected to have type " <> show goal <> " but actually has type " <> show ty
+    throwError_BuildM $ "type error: variable " <> show x <> " is expected to have type " <> show goal <> " but actually has type " <> show ty
   pure $ VarDrv { gamma: ctx.gamma, ty } x
 
 app :: BuildDrv -> BuildDrv -> BuildDrv
@@ -202,13 +202,13 @@ app m_func m_arg = do
   func <- local (_ { mb_goal = pure $ PiGoal }) m_func
   { dom, cod } <- extractTypeM func >>= case _ of
     PiTerm dom cod -> pure { dom, cod }
-    _ -> throwError_BuildM $ "cannot apply " <> show func <> " since it's not a function"
+    _ -> throwError_BuildM $ "type error: cannot apply " <> show func <> " since it's not a function"
   ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal cod) do
-    throwError_BuildM $ "application of " <> show func <> " to an argument is expected to have type " <> show goal <> " but the function has codomain " <> show cod
+    throwError_BuildM $ "type error: application of " <> show func <> " to an argument is expected to have type " <> show goal <> " but the function has codomain " <> show cod
   arg <- local (_ { mb_goal = pure $ TermGoal dom }) m_arg
   ty_arg <- local (_ { mb_goal = pure $ TermGoal dom }) do extractTypeM arg
   unless (dom == ty_arg) do
-    throwError_BuildM $ "maltyped application of " <> show func <> " to argument " <> show arg <> " since the argument is expected to have type " <> show dom <> " but it actually has type " <> show ty_arg
+    throwError_BuildM $ "type error: application of " <> show func <> " to argument " <> show arg <> " since the argument is expected to have type " <> show dom <> " but it actually has type " <> show ty_arg
   pure $ AppDrv { gamma: ctx.gamma, dom, cod } func arg
 
 lam :: BuildDrv -> BuildDrv -> BuildDrv
@@ -217,10 +217,18 @@ lam m_dom m_b = do
   domDrv <- local (_ { mb_goal = pure $ TermGoal UniTerm }) m_dom
   dom <- extractTermM domDrv
   goal_b <- case ctx.mb_goal of
+    Just PiGoal -> pure Nothing
     Just (TermGoal (PiTerm a _b)) -> pure $ Just $ TermGoal a
+    Just (TermGoal _) -> throwError_BuildM "type error: lam is expected to have non-pi type"
     _ -> pure Nothing
   b <- local (_ { gamma = dom ▹ ctx.gamma, mb_goal = goal_b }) m_b
   cod <- extractTypeM b
+  case ctx.mb_goal of
+    Just (TermGoal (PiTerm cod' dom')) -> do
+      unless (dom == dom') do throwError_BuildM $ "type error: lam's dom is expected to be " <> show dom' <> " but it's actually " <> show dom
+      unless (cod == cod') do throwError_BuildM $ "type error: lam's cod is expected to be " <> show cod' <> " but it's actually " <> show cod
+    Just (TermGoal goal) -> throwError_BuildM $ "type error: lam is expected to have non-pi type: " <> show goal
+    _ -> pure unit
   pure $ LamDrv { gamma: ctx.gamma, dom, cod } b
 
 pi :: BuildDrv -> BuildDrv -> BuildDrv
@@ -228,7 +236,7 @@ pi m_dom m_cod = do
   ctx <- ask
   let ty = UniTerm
   ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
-    throwError_BuildM $ "pi is expected to have type " <> show goal <> " but actually has type " <> show ty
+    throwError_BuildM $ "type error: pi is expected to have type " <> show goal <> " but actually has type " <> show ty
   dom <- local (_ { mb_goal = pure $ TermGoal UniTerm }) m_dom
   cod <- local (_ { gamma = UniTerm ▹ ctx.gamma, mb_goal = pure $ TermGoal UniTerm }) m_cod
   pure $ PiDrv { gamma: ctx.gamma } dom cod
@@ -238,14 +246,17 @@ uni = do
   ctx <- ask
   let ty = UniTerm
   ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
-    throwError_BuildM $ "uni is expected to have type " <> show goal <> " but actually has type " <> show ty
+    throwError_BuildM $ "type error: uni is expected to have type " <> show goal <> " but actually has type " <> show ty
   pure $ UniDrv { gamma: ctx.gamma }
 
 ann :: Term -> BuildDrv -> BuildDrv
 ann ty m_a = do
   ctx <- ask
-  ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
-    throwError_BuildM $ "ann is expected to have type " <> show goal <> " but actually has type " <> show ty
+  ctx.mb_goal # maybe (pure unit) case _ of
+    -- unless (goal == TermGoal ty) do
+    PiGoal | PiTerm _ _ <- ty -> throwError_BuildM $ "type error: ann is expected to have a pi type but actually has type " <> show ty
+    TermGoal goal | goal /= ty -> throwError_BuildM $ "type error: ann is expected to have type " <> show goal <> " but actually has type " <> show ty
+    _ -> pure unit
   local (_ { mb_goal = pure $ TermGoal ty }) m_a
 
 hole :: String -> BuildDrv
