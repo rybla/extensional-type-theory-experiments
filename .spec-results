@@ -1,9 +1,44 @@
 [
   [
+    "Experiment1 ((λ (x : 𝒰) . x) 𝒰)",
+    {
+      "timestamp": "1744403340309.0",
+      "success": true
+    }
+  ],
+  [
+    "Experiment1 (λ (x : 𝒰) . (assumption! :: 𝒰))",
+    {
+      "timestamp": "1744403340309.0",
+      "success": false
+    }
+  ],
+  [
+    "Experiment1 (λ (x : 𝒰) . assumption!)",
+    {
+      "timestamp": "1744403323607.0",
+      "success": false
+    }
+  ],
+  [
+    "Experiment1 (λ (x : 𝒰) . x)",
+    {
+      "timestamp": "1744403340309.0",
+      "success": true
+    }
+  ],
+  [
     "Experiment1 ex1",
     {
-      "timestamp": "1744385134638.0",
-      "success": false
+      "timestamp": "1744402922348.0",
+      "success": true
+    }
+  ],
+  [
+    "Experiment1 ex2",
+    {
+      "timestamp": "1744402922348.0",
+      "success": true
     }
   ]
 ]

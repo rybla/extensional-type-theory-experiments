@@ -9,6 +9,7 @@ import Control.Monad.Writer (WriterT, runWriterT)
 import Control.Plus (empty)
 import Data.Either.Nested (type (\/))
 import Data.Eq.Generic (genericEq)
+import Data.FoldableWithIndex (foldMapWithIndex)
 import Data.FunctorWithIndex (mapWithIndex)
 import Data.Generic.Rep (class Generic)
 import Data.Identity (Identity)
@@ -16,10 +17,10 @@ import Data.List (List, (:))
 import Data.List as List
 import Data.Maybe (Maybe(..), maybe)
 import Data.Newtype (class Newtype, unwrap)
-import Data.Show.Generic (genericShow)
 import Data.Tuple.Nested (type (/\))
 import Effect (Effect)
 import Effect.Class.Console as Console
+import Utility (fromMaybeM)
 
 --------------------------------------------------------------------------------
 -- main
@@ -43,10 +44,20 @@ data Term
 derive instance Generic Term _
 
 instance Show Term where
-  show x = genericShow x
+  show (VarTerm x) = show x
+  show (AppTerm f a) = "(" <> show f <> " " <> show a <> ")"
+  show (LamTerm b) = "(λ " <> show b <> ")"
+  show (PiTerm a b) = "(Π " <> show a <> " " <> show b <> ")"
+  show UniTerm = "𝒰"
 
 instance Eq Term where
   eq x = genericEq x
+
+varT i = VarTerm (Var i)
+appT f a = AppTerm f a
+lamT b = LamTerm b
+piT a b = PiTerm a b
+uniT = UniTerm
 
 --------------------------------------------------------------------------------
 -- Drv
@@ -58,8 +69,11 @@ data Drv
   | LamDrv { gamma :: Ctx, dom :: Term, cod :: Term } Drv
   | PiDrv { gamma :: Ctx } Drv Drv
   | UniDrv { gamma :: Ctx }
+  | AnnDrv { gamma :: Ctx, ty :: Term } Drv
   | HoleDrv { gamma :: Ctx, goal :: Maybe Goal, label :: String }
   | TacticDrv { gamma :: Ctx, ty :: Term } Tactic Drv
+
+derive instance Generic Drv _
 
 instance Show Drv where
   show (VarDrv _r x) = show x
@@ -67,8 +81,12 @@ instance Show Drv where
   show (LamDrv _r b) = "(λ " <> show b <> ")"
   show (PiDrv _r dom cod) = "(Π " <> show dom <> " . " <> show cod <> ")"
   show (UniDrv _r) = "𝒰"
+  show (AnnDrv r a) = "(" <> show a <> " :: " <> show r.ty <> ")"
   show (HoleDrv r) = "?" <> r.label
   show (TacticDrv _r (Tactic t) _args) = "($" <> show t.name <> " ...)"
+
+instance Eq Drv where
+  eq x = genericEq x
 
 data Goal
   = TermGoal Term
@@ -92,6 +110,7 @@ extractTerm = go
   go (LamDrv _r b) = LamTerm <$> go b
   go (PiDrv _r dom cod) = PiTerm <$> go dom <*> go cod
   go (UniDrv _r) = pure UniTerm
+  go (AnnDrv _r a) = go a
   go (HoleDrv _r) = Nothing
   go (TacticDrv _r _t _mb_args) = Nothing
 
@@ -104,6 +123,7 @@ extractType = go
   go (LamDrv r _b) = pure $ PiTerm r.dom r.cod
   go (PiDrv _r _dom _cod) = pure $ UniTerm
   go (UniDrv _r) = pure $ UniTerm
+  go (AnnDrv r a) = pure r.ty
   go (HoleDrv _r) = Nothing
   go (TacticDrv _r _t _mb_args) = Nothing
 
@@ -122,7 +142,7 @@ runBuildM
 runBuildM m = m
   # runExceptT
   # flip runReaderT
-      { gamma: Ctx mempty
+      { gamma: mempty
       , mb_goal: empty
       }
   # runWriterT
@@ -156,11 +176,11 @@ type BuildLog =
   }
 
 extractTermM :: Drv -> BuildM Term
-extractTermM d = extractTerm d # flip maybe pure do
+extractTermM d = extractTerm d # fromMaybeM do
   throwError_BuildM $ "failed to extract term of " <> show d
 
 extractTypeM :: Drv -> BuildM Term
-extractTypeM d = extractType d # flip maybe pure do
+extractTypeM d = extractType d # fromMaybeM do
   throwError_BuildM $ "failed to extract type of " <> show d
 
 --------------------------------------------------------------------------------
@@ -192,11 +212,14 @@ app m_func m_arg = do
   pure $ AppDrv { gamma: ctx.gamma, dom, cod } func arg
 
 lam :: BuildDrv -> BuildDrv -> BuildDrv
-lam m_doBuildDrv m_b = do
+lam m_dom m_b = do
   ctx <- ask
-  doBuildDrv <- m_doBuildDrv
-  dom <- extractTermM doBuildDrv
-  b <- local (_ { gamma = cons_Ctx dom ctx.gamma, mb_goal = empty }) m_b
+  domDrv <- local (_ { mb_goal = pure $ TermGoal UniTerm }) m_dom
+  dom <- extractTermM domDrv
+  goal_b <- case ctx.mb_goal of
+    Just (TermGoal (PiTerm a _b)) -> pure $ Just $ TermGoal a
+    _ -> pure Nothing
+  b <- local (_ { gamma = dom ▹ ctx.gamma, mb_goal = goal_b }) m_b
   cod <- extractTypeM b
   pure $ LamDrv { gamma: ctx.gamma, dom, cod } b
 
@@ -207,7 +230,7 @@ pi m_dom m_cod = do
   ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
     throwError_BuildM $ "pi is expected to have type " <> show goal <> " but actually has type " <> show ty
   dom <- local (_ { mb_goal = pure $ TermGoal UniTerm }) m_dom
-  cod <- local (_ { mb_goal = pure $ TermGoal UniTerm }) m_cod
+  cod <- local (_ { gamma = UniTerm ▹ ctx.gamma, mb_goal = pure $ TermGoal UniTerm }) m_cod
   pure $ PiDrv { gamma: ctx.gamma } dom cod
 
 uni :: BuildDrv
@@ -218,12 +241,19 @@ uni = do
     throwError_BuildM $ "uni is expected to have type " <> show goal <> " but actually has type " <> show ty
   pure $ UniDrv { gamma: ctx.gamma }
 
+ann :: Term -> BuildDrv -> BuildDrv
+ann ty m_a = do
+  ctx <- ask
+  ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
+    throwError_BuildM $ "ann is expected to have type " <> show goal <> " but actually has type " <> show ty
+  local (_ { mb_goal = pure $ TermGoal ty }) m_a
+
 hole :: String -> BuildDrv
 hole label = do
   ctx <- ask
   pure $ HoleDrv { gamma: ctx.gamma, goal: ctx.mb_goal, label }
 
-tactic :: Tactic -> List BuildDrv -> BuildDrv
+tactic :: Tactic -> Array BuildDrv -> BuildDrv
 tactic (Tactic t) args = do
   ctx <- ask
   drv <- t.call { gamma: ctx.gamma, mb_goal: ctx.mb_goal, args }
@@ -250,8 +280,14 @@ instance Show Ctx where
 
 derive newtype instance Eq Ctx
 
+derive newtype instance Semigroup Ctx
+
+derive newtype instance Monoid Ctx
+
 cons_Ctx :: Term -> Ctx -> Ctx
 cons_Ctx ty (Ctx xs) = Ctx ({ tm: empty, ty } : xs)
+
+infixr 6 cons_Ctx as ▹
 
 lookup_Ctx :: Var -> Ctx -> Maybe CtxItem
 lookup_Ctx (Var i) (Ctx xs) = xs List.!! i
@@ -278,7 +314,7 @@ newtype Tactic = Tactic
   , call ::
       { gamma :: Ctx
       , mb_goal :: Maybe Goal
-      , args :: List BuildDrv
+      , args :: Array BuildDrv
       }
       -> BuildDrv
   }
@@ -286,4 +322,29 @@ newtype Tactic = Tactic
 derive instance Generic Tactic _
 
 derive instance Newtype Tactic _
+
+instance Eq Tactic where
+  eq (Tactic t1) (Tactic t2) = t1.name == t2.name
+
+--------------------------------------------------------------------------------
+-- Tactic Examples
+--------------------------------------------------------------------------------
+
+-- | Finds the first thing in context that satisfies the goal.
+assumption :: Tactic
+assumption = Tactic
+  { name: "assumption"
+  , call: \{ gamma, mb_goal, args: _ } -> do
+      ty_goal <- case mb_goal of
+        Just (TermGoal ty) -> pure ty
+        _ -> throwError_BuildM $ "assumption: invalid goal: " <> show mb_goal
+      let
+        candidates = gamma
+          # unwrap
+          # foldMapWithIndex \i x -> if x.ty == ty_goal then pure (Var i) else mempty
+      x <- case List.head candidates of
+        Nothing -> throwError_BuildM $ "assumption: no candidates"
+        Just x -> pure x
+      pure $ VarDrv { gamma, ty: ty_goal } x
+  }
 

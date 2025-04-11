@@ -1,27 +1,54 @@
 module Test.Experiment1 where
 
-import Experiment1.Main
 import Prelude
 
-import Data.Either (isLeft)
+import Control.Plus (empty)
+import Data.Either (Either(..), isLeft, isRight)
+import Data.FoldableWithIndex (foldMapWithIndex)
+import Data.List (List(..), (:))
+import Data.List as List
+import Data.Maybe (Maybe(..))
+import Data.Newtype (unwrap)
 import Data.Tuple.Nested ((/\))
-import Test.Spec (Spec)
-import Test.Spec as Spec
-import Test.Spec.Assertions (shouldSatisfy)
+import Experiment1.Main (Ctx(..), Drv(..), Goal(..), Tactic(..), Term(..), Var(..), ann, app, assumption, lam, runBuildM, tactic, throwError_BuildM, uni, uniT, (▹))
+import Experiment1.Main as Lang
+import Test.Spec (Spec, describe, it)
+import Test.Spec.Assertions (shouldEqual, shouldSatisfy)
+
+var x = Lang.var (Var x)
 
 spec :: Spec Unit
-spec = Spec.describe "Experiment1" do
+spec = describe "Experiment1" do
+  mkTest "(λ (x : 𝒰) . x)"
+    (lam uni (var 0))
+    ( _ `shouldEqual`
+        Right
+          ( LamDrv { gamma: mempty, dom: uniT, cod: uniT } $
+              VarDrv { gamma: uniT ▹ mempty, ty: uniT } (Var 0)
+          )
+    )
+  mkTest "((λ (x : 𝒰) . x) 𝒰)"
+    (app (lam uni (var 0)) uni)
+    ( _ `shouldEqual`
+        Right
+          ( AppDrv { gamma: mempty, dom: uniT, cod: uniT }
+              ( LamDrv { gamma: mempty, dom: uniT, cod: uniT } $
+                  VarDrv { gamma: uniT ▹ mempty, ty: uniT } (Var 0)
+              )
+              (UniDrv { gamma: mempty })
+          )
+    )
+  mkTest "(λ (x : 𝒰) . (assumption! :: 𝒰))"
+    (lam uni (ann uniT (tactic assumption [])))
+    ( _ `shouldEqual`
+        Right
+          ( LamDrv { gamma: mempty, dom: uniT, cod: uniT } $
+              VarDrv { gamma: uniT ▹ mempty, ty: uniT } (Var 0)
+          )
+    )
 
-  Spec.it "ex1" do
-    let (err_drv /\ logs) /\ _env = runBuildM $ lam uni (var (Var 0))
-    shouldSatisfy err_drv isLeft
-    shouldSatisfy logs (_ == [])
-
-  pure unit
-
-assumption :: Tactic
-assumption = Tactic
-  { name: "assumption"
-  , call: \{ gamma, mb_goal, args } -> throwError_BuildM $ "unimplemented"
-  }
+  where
+  mkTest label mdrv f = it label do
+    let (err_drv /\ _logs) /\ _env = runBuildM mdrv
+    f err_drv
 
