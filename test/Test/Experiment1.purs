@@ -2,19 +2,14 @@ module Test.Experiment1 where
 
 import Prelude
 
-import Control.Plus (empty)
-import Data.Either (Either(..), isLeft, isRight)
-import Data.FoldableWithIndex (foldMapWithIndex)
-import Data.List (List(..), (:))
-import Data.List as List
-import Data.Maybe (Maybe(..))
-import Data.Newtype (unwrap)
+import Data.Either (Either(..))
 import Data.Tuple.Nested ((/\))
-import Experiment1.Main (Ctx(..), Drv(..), Goal(..), Tactic(..), Term(..), Var(..), ann, app, assumption, lam, runBuildM, tactic, throwError_BuildM, uni, uniT, (▹))
+import Experiment1.Main (Drv(..), Var(..), BuildDrv, ann, app, assumption, lam, runBuildM, tactic, uni, uniT, (▹))
 import Experiment1.Main as Lang
+import Test.Common (shouldEqual)
 import Test.Spec (Spec, describe, it)
-import Test.Spec.Assertions (shouldEqual, shouldSatisfy)
 
+var ∷ Int → BuildDrv
 var x = Lang.var (Var x)
 
 spec :: Spec Unit
@@ -38,12 +33,13 @@ spec = describe "Experiment1" do
               (UniDrv { gamma: mempty })
           )
     )
-  mkTest "(λ (x : 𝒰) . (assumption! :: 𝒰))"
+  mkTest "(λ (x : 𝒰) . ($assumption :: 𝒰))"
     (lam uni (ann uniT (tactic assumption [])))
     ( _ `shouldEqual`
         Right
-          ( LamDrv { gamma: mempty, dom: uniT, cod: uniT } $
-              VarDrv { gamma: uniT ▹ mempty, ty: uniT } (Var 0)
+          ( LamDrv { gamma: mempty, dom: uniT, cod: uniT }
+              $ TacticDrv { gamma: uniT ▹ mempty, ty: uniT } assumption
+              $ VarDrv { gamma: uniT ▹ mempty, ty: uniT } (Var 0)
           )
     )
 

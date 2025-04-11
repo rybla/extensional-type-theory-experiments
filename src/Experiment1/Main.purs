@@ -13,7 +13,7 @@ import Data.FoldableWithIndex (foldMapWithIndex)
 import Data.FunctorWithIndex (mapWithIndex)
 import Data.Generic.Rep (class Generic)
 import Data.Identity (Identity)
-import Data.List (List, (:))
+import Data.List (List(..), (:))
 import Data.List as List
 import Data.Maybe (Maybe(..), maybe)
 import Data.Newtype (class Newtype, unwrap)
@@ -76,14 +76,14 @@ data Drv
 derive instance Generic Drv _
 
 instance Show Drv where
-  show (VarDrv _r x) = show x
-  show (AppDrv _r f a) = "(" <> show f <> " " <> show a <> ")"
-  show (LamDrv _r b) = "(λ " <> show b <> ")"
-  show (PiDrv _r dom cod) = "(Π " <> show dom <> " . " <> show cod <> ")"
-  show (UniDrv _r) = "𝒰"
-  show (AnnDrv r a) = "(" <> show a <> " :: " <> show r.ty <> ")"
-  show (HoleDrv r) = "?" <> r.label
-  show (TacticDrv _r (Tactic t) _args) = "($" <> show t.name <> " ...)"
+  show (VarDrv r x) = show r <> " " <> show x
+  show (AppDrv r f a) = show r <> " " <> "(" <> show f <> " " <> show a <> ")"
+  show (LamDrv r b) = show r <> " " <> "(λ " <> show b <> ")"
+  show (PiDrv r dom cod) = show r <> " " <> "(Π " <> show dom <> " . " <> show cod <> ")"
+  show (UniDrv r) = show r <> " " <> "𝒰"
+  show (AnnDrv r a) = show r <> " " <> "(" <> show a <> " :: " <> show r.ty <> ")"
+  show (HoleDrv r) = show r <> " " <> "?" <> r.label
+  show (TacticDrv r (Tactic t) a) = show r <> " " <> "($" <> t.name <> " ==> " <> show a <> ")"
 
 instance Eq Drv where
   eq x = genericEq x
@@ -112,7 +112,7 @@ extractTerm = go
   go (UniDrv _r) = pure UniTerm
   go (AnnDrv _r a) = go a
   go (HoleDrv _r) = Nothing
-  go (TacticDrv _r _t _mb_args) = Nothing
+  go (TacticDrv _r _t a) = extractTerm a
 
 extractType :: Drv -> Maybe Term
 extractType = go
@@ -123,9 +123,9 @@ extractType = go
   go (LamDrv r _b) = pure $ PiTerm r.dom r.cod
   go (PiDrv _r _dom _cod) = pure $ UniTerm
   go (UniDrv _r) = pure $ UniTerm
-  go (AnnDrv r a) = pure r.ty
+  go (AnnDrv r _a) = pure r.ty
   go (HoleDrv _r) = Nothing
-  go (TacticDrv _r _t _mb_args) = Nothing
+  go (TacticDrv _r _t a) = extractType a
 
 --------------------------------------------------------------------------------
 -- BuildM
@@ -253,7 +253,6 @@ ann :: Term -> BuildDrv -> BuildDrv
 ann ty m_a = do
   ctx <- ask
   ctx.mb_goal # maybe (pure unit) case _ of
-    -- unless (goal == TermGoal ty) do
     PiGoal | PiTerm _ _ <- ty -> throwError_BuildM $ "type error: ann is expected to have a pi type but actually has type " <> show ty
     TermGoal goal | goal /= ty -> throwError_BuildM $ "type error: ann is expected to have type " <> show goal <> " but actually has type " <> show ty
     _ -> pure unit
@@ -281,13 +280,17 @@ type CtxItem = { tm :: Maybe Term, ty :: Term }
 derive instance Newtype Ctx _
 
 instance Show Ctx where
+  show (Ctx Nil) = "∅"
   show (Ctx ctx) = ctx # mapWithIndex f # List.intercalate ", "
     where
     f i x =
-      show (Var i) <>
-        case x.tm of
-          Nothing -> " : " <> show x.ty
-          Just tm -> " = " <> show tm <> " : " <> show x.ty
+      "(" <> show (Var i)
+        <>
+          ( case x.tm of
+              Nothing -> " : " <> show x.ty
+              Just tm -> " = " <> show tm <> " : " <> show x.ty
+          )
+        <> ")"
 
 derive newtype instance Eq Ctx
 

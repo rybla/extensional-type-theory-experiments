@@ -2,14 +2,21 @@
   [
     "Experiment1 ((λ (x : 𝒰) . x) 𝒰)",
     {
-      "timestamp": "1744403340309.0",
+      "timestamp": "1744405089884.0",
+      "success": true
+    }
+  ],
+  [
+    "Experiment1 (λ (x : 𝒰) . ($assumption :: 𝒰))",
+    {
+      "timestamp": "1744405089884.0",
       "success": true
     }
   ],
   [
     "Experiment1 (λ (x : 𝒰) . (assumption! :: 𝒰))",
     {
-      "timestamp": "1744403340309.0",
+      "timestamp": "1744403894491.0",
       "success": false
     }
   ],
@@ -23,7 +30,7 @@
   [
     "Experiment1 (λ (x : 𝒰) . x)",
     {
-      "timestamp": "1744403340309.0",
+      "timestamp": "1744405089884.0",
       "success": true
     }
   ],
