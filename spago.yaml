@@ -1,0 +1,29 @@
+package:
+  name: extensional-type-theory-experiments
+  dependencies:
+    - aff-promise
+    - argonaut
+    - argonaut-generic
+    - arrays
+    - console
+    - debug
+    - effect
+    - either
+    - lists
+    - maybe
+    - prelude
+    - profunctor-lenses
+    - random
+    - record
+    - spec
+    - spec-node
+    - strings
+    - transformers
+    - variant
+  test:
+    main: Test.Main
+    dependencies: []
+workspace:
+  packageSet:
+    registry: 63.10.0
+  extraPackages: {}

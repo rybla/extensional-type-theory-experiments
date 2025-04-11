@@ -1,0 +1,17 @@
+{
+  "name": "extensional-type-theory-experiments",
+  "scripts": {
+    "build": "spago build",
+    "test": "spago test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "purescript": "^0.15.16-4",
+    "spago": "^0.93.43"
+  }
+}
