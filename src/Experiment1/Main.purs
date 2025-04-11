@@ -75,17 +75,17 @@ data Drv
 
 derive instance Generic Drv _
 
-_ShowDrv_metadata = false
+_ShowDrv_show_extra_info = false
 
 instance Show Drv where
-  show (VarDrv r x) = (if _ShowDrv_metadata then show r else "") <> show x
-  show (AppDrv r f a) = (if _ShowDrv_metadata then show r else "") <> "(" <> show f <> " " <> show a <> ")"
-  show (LamDrv r b) = (if _ShowDrv_metadata then show r else "") <> "(λ " <> show b <> ")"
-  show (PiDrv r dom cod) = (if _ShowDrv_metadata then show r else "") <> "(Π " <> show dom <> " . " <> show cod <> ")"
-  show (UniDrv r) = (if _ShowDrv_metadata then show r else "") <> "𝒰"
-  show (AnnDrv r a) = (if _ShowDrv_metadata then show r else "") <> "(" <> show a <> " :: " <> show r.ty <> ")"
-  show (HoleDrv r) = (if _ShowDrv_metadata then show r else "") <> "?" <> r.label
-  show (TacticDrv r (Tactic t) a) = (if _ShowDrv_metadata then show r else "") <> "($" <> t.name <> " ==> " <> show a <> ")"
+  show (VarDrv r x) = (if _ShowDrv_show_extra_info then show r else "") <> show x
+  show (AppDrv r f a) = (if _ShowDrv_show_extra_info then show r else "") <> "(" <> show f <> " " <> show a <> ")"
+  show (LamDrv r b) = (if _ShowDrv_show_extra_info then show r else "") <> "(λ " <> show b <> ")"
+  show (PiDrv r dom cod) = (if _ShowDrv_show_extra_info then show r else "") <> "(Π " <> show dom <> " . " <> show cod <> ")"
+  show (UniDrv r) = (if _ShowDrv_show_extra_info then show r else "") <> "𝒰"
+  show (AnnDrv r a) = (if _ShowDrv_show_extra_info then show r else "") <> "(" <> show a <> " :: " <> show r.ty <> ")"
+  show (HoleDrv r) = (if _ShowDrv_show_extra_info then show r else "") <> "?" <> r.label
+  show (TacticDrv r (Tactic t) a) = (if _ShowDrv_show_extra_info then show r else "") <> "($" <> t.name <> " ==> " <> show a <> ")"
 
 instance Eq Drv where
   eq x = genericEq x
