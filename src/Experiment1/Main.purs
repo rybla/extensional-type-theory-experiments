@@ -17,18 +17,20 @@ import Data.List as List
 import Data.Maybe (Maybe(..), maybe)
 import Data.Newtype (class Newtype, unwrap)
 import Data.Show.Generic (genericShow)
-import Data.Traversable (sequence)
 import Data.Tuple.Nested (type (/\))
 import Effect (Effect)
 import Effect.Class.Console as Console
-import Partial.Unsafe (unsafeCrashWith)
 
+--------------------------------------------------------------------------------
+-- main
 --------------------------------------------------------------------------------
 
 main :: Effect Unit
 main = do
   Console.log "Experiment1.main"
 
+--------------------------------------------------------------------------------
+-- Term
 --------------------------------------------------------------------------------
 
 data Term
@@ -47,6 +49,8 @@ instance Eq Term where
   eq x = genericEq x
 
 --------------------------------------------------------------------------------
+-- Drv
+--------------------------------------------------------------------------------
 
 data Drv
   = VarDrv { gamma :: Ctx, ty :: Term } Var
@@ -54,7 +58,7 @@ data Drv
   | LamDrv { gamma :: Ctx, dom :: Term, cod :: Term } Drv
   | PiDrv { gamma :: Ctx } Drv Drv
   | UniDrv { gamma :: Ctx }
-  | HoleDrv { gamma :: Ctx, label :: String }
+  | HoleDrv { gamma :: Ctx, goal :: Maybe Goal, label :: String }
   | TacticDrv { gamma :: Ctx, ty :: Term } Tactic Drv
 
 instance Show Drv where
@@ -65,6 +69,19 @@ instance Show Drv where
   show (UniDrv _r) = "𝒰"
   show (HoleDrv r) = "?" <> r.label
   show (TacticDrv _r (Tactic t) _args) = "($" <> show t.name <> " ...)"
+
+data Goal
+  = TermGoal Term
+  | PiGoal
+
+derive instance Generic Goal _
+
+instance Show Goal where
+  show (TermGoal t) = show t
+  show PiGoal = "(Π _ _)"
+
+instance Eq Goal where
+  eq x = genericEq x
 
 extractTerm :: Drv -> Maybe Term
 extractTerm = go
@@ -91,6 +108,8 @@ extractType = go
   go (TacticDrv _r _t _mb_args) = Nothing
 
 --------------------------------------------------------------------------------
+-- BuildM
+--------------------------------------------------------------------------------
 
 type BuildM a = ExceptT BuildErr (ReaderT BuildCtx (WriterT (Array BuildLog) (StateT BuildEnv Identity))) a
 
@@ -104,7 +123,7 @@ runBuildM m = m
   # runExceptT
   # flip runReaderT
       { gamma: Ctx mempty
-      , goal: empty
+      , mb_goal: empty
       }
   # runWriterT
   # flip runStateT {}
@@ -112,7 +131,7 @@ runBuildM m = m
 
 type BuildCtx =
   { gamma :: Ctx
-  , goal :: Maybe Term
+  , mb_goal :: Maybe Goal
   }
 
 type BuildEnv =
@@ -144,22 +163,30 @@ extractTypeM :: Drv -> BuildM Term
 extractTypeM d = extractType d # flip maybe pure do
   throwError_BuildM $ "failed to extract type of " <> show d
 
+--------------------------------------------------------------------------------
+-- BuildDrv
+--------------------------------------------------------------------------------
+
 var :: Var -> BuildDrv
 var x = do
   ctx <- ask
   ty <- lookup_Ctx x ctx.gamma # flip maybe (_.ty >>> pure) do
     throwError_BuildM $ "variable " <> show x <> " is out-of-bounds"
+  ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
+    throwError_BuildM $ "variable " <> show x <> " is expected to have type " <> show goal <> " but actually has type " <> show ty
   pure $ VarDrv { gamma: ctx.gamma, ty } x
 
 app :: BuildDrv -> BuildDrv -> BuildDrv
 app m_func m_arg = do
   ctx <- ask
-  func <- m_func
+  func <- local (_ { mb_goal = pure $ PiGoal }) m_func
   { dom, cod } <- extractTypeM func >>= case _ of
     PiTerm dom cod -> pure { dom, cod }
     _ -> throwError_BuildM $ "cannot apply " <> show func <> " since it's not a function"
-  arg <- m_arg
-  ty_arg <- extractTypeM arg
+  ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal cod) do
+    throwError_BuildM $ "application of " <> show func <> " to an argument is expected to have type " <> show goal <> " but the function has codomain " <> show cod
+  arg <- local (_ { mb_goal = pure $ TermGoal dom }) m_arg
+  ty_arg <- local (_ { mb_goal = pure $ TermGoal dom }) do extractTypeM arg
   unless (dom == ty_arg) do
     throwError_BuildM $ "maltyped application of " <> show func <> " to argument " <> show arg <> " since the argument is expected to have type " <> show dom <> " but it actually has type " <> show ty_arg
   pure $ AppDrv { gamma: ctx.gamma, dom, cod } func arg
@@ -169,34 +196,42 @@ lam m_doBuildDrv m_b = do
   ctx <- ask
   doBuildDrv <- m_doBuildDrv
   dom <- extractTermM doBuildDrv
-  b <- local (_ { gamma = cons_Ctx dom ctx.gamma }) m_b
+  b <- local (_ { gamma = cons_Ctx dom ctx.gamma, mb_goal = empty }) m_b
   cod <- extractTypeM b
   pure $ LamDrv { gamma: ctx.gamma, dom, cod } b
 
 pi :: BuildDrv -> BuildDrv -> BuildDrv
 pi m_dom m_cod = do
   ctx <- ask
-  dom <- m_dom
-  cod <- m_cod
+  let ty = UniTerm
+  ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
+    throwError_BuildM $ "pi is expected to have type " <> show goal <> " but actually has type " <> show ty
+  dom <- local (_ { mb_goal = pure $ TermGoal UniTerm }) m_dom
+  cod <- local (_ { mb_goal = pure $ TermGoal UniTerm }) m_cod
   pure $ PiDrv { gamma: ctx.gamma } dom cod
 
 uni :: BuildDrv
 uni = do
   ctx <- ask
+  let ty = UniTerm
+  ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
+    throwError_BuildM $ "uni is expected to have type " <> show goal <> " but actually has type " <> show ty
   pure $ UniDrv { gamma: ctx.gamma }
 
 hole :: String -> BuildDrv
 hole label = do
   ctx <- ask
-  pure $ HoleDrv { gamma: ctx.gamma, label }
+  pure $ HoleDrv { gamma: ctx.gamma, goal: ctx.mb_goal, label }
 
 tactic :: Tactic -> List BuildDrv -> BuildDrv
 tactic (Tactic t) args = do
   ctx <- ask
-  drv <- t.call { gamma: ctx.gamma, goal: ctx.goal, args }
+  drv <- t.call { gamma: ctx.gamma, mb_goal: ctx.mb_goal, args }
   ty <- extractTypeM drv
   pure $ TacticDrv { gamma: ctx.gamma, ty } (Tactic t) drv
 
+--------------------------------------------------------------------------------
+-- Ctx
 --------------------------------------------------------------------------------
 
 newtype Ctx = Ctx (List CtxItem)
@@ -213,12 +248,16 @@ instance Show Ctx where
           Nothing -> " : " <> show x.ty
           Just tm -> " = " <> show tm <> " : " <> show x.ty
 
+derive newtype instance Eq Ctx
+
 cons_Ctx :: Term -> Ctx -> Ctx
 cons_Ctx ty (Ctx xs) = Ctx ({ tm: empty, ty } : xs)
 
 lookup_Ctx :: Var -> Ctx -> Maybe CtxItem
 lookup_Ctx (Var i) (Ctx xs) = xs List.!! i
 
+--------------------------------------------------------------------------------
+-- Var
 --------------------------------------------------------------------------------
 
 newtype Var = Var Int
@@ -231,12 +270,14 @@ instance Show Var where
 derive newtype instance Eq Var
 
 --------------------------------------------------------------------------------
+-- Tactic
+--------------------------------------------------------------------------------
 
 newtype Tactic = Tactic
   { name :: String
   , call ::
       { gamma :: Ctx
-      , goal :: Maybe Term
+      , mb_goal :: Maybe Goal
       , args :: List BuildDrv
       }
       -> BuildDrv
