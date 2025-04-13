@@ -20,6 +20,7 @@ import Data.Newtype (class Newtype, unwrap)
 import Data.Tuple.Nested (type (/\))
 import Effect (Effect)
 import Effect.Class.Console as Console
+import Partial.Unsafe (unsafeCrashWith)
 import Utility (fromMaybeM)
 
 --------------------------------------------------------------------------------
@@ -205,13 +206,14 @@ app m_func m_arg = do
   { dom, cod } <- extractTypeM func >>= case _ of
     PiTerm dom cod -> pure { dom, cod }
     _ -> throwError_BuildM $ "type error: cannot apply " <> show func <> " since it's not a function"
-  ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal cod) do
-    throwError_BuildM $ "type error: application of " <> show func <> " to an argument is expected to have type " <> show goal <> " but the function has codomain " <> show cod
   arg <- local (_ { mb_goal = pure $ TermGoal dom }) m_arg
   ty_arg <- local (_ { mb_goal = pure $ TermGoal dom }) do extractTypeM arg
   unless (dom == ty_arg) do
     throwError_BuildM $ "type error: application of " <> show func <> " to argument " <> show arg <> " since the argument is expected to have type " <> show dom <> " but it actually has type " <> show ty_arg
-  pure $ AppDrv { gamma: ctx.gamma, dom, cod } func arg
+  cod' <- unsafeCrashWith "TODO: substitute value of arg into cod" cod
+  ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal cod') do
+    throwError_BuildM $ "type error: application of " <> show func <> " to an argument is expected to have type " <> show goal <> " but the function has codomain " <> show cod'
+  pure $ AppDrv { gamma: ctx.gamma, dom, cod: cod' } func arg
 
 lam :: BuildDrv -> BuildDrv -> BuildDrv
 lam m_dom m_b = do
@@ -355,9 +357,8 @@ assumption = Tactic
         Just (TermGoal ty) -> pure ty
         _ -> throwError_BuildM $ "assumption: invalid goal: " <> show mb_goal
       let
-        candidates = gamma
-          # unwrap
-          # foldMapWithIndex \i x -> if x.ty == ty_goal then pure (Var i) else mempty
+        candidates = unwrap gamma # foldMapWithIndex \i x ->
+          if x.ty == ty_goal then pure (Var i) else mempty
       x <- case List.head candidates of
         Nothing -> throwError_BuildM $ "assumption: no candidates"
         Just x -> pure x
