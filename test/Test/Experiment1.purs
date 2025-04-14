@@ -4,6 +4,7 @@ import Prelude
 
 import Data.Either (Either(..))
 import Data.Tuple.Nested ((/\))
+import Data.Unfoldable (none)
 import Experiment1.Main (BuildDrv, Drv(..), Var(..), ann, app, assumption, lam, pi, piT, runBuildM, tactic, uni, uniT, (▹))
 import Experiment1.Main as Lang
 import Test.Common (shouldEqual)
@@ -56,6 +57,6 @@ spec = describe "Experiment1" do
 
   where
   mkTest label mdrv f = it label do
-    let (err_drv /\ _logs) /\ _env = runBuildM mdrv
+    let (err_drv /\ _logs) /\ _env = runBuildM $ mdrv mempty none
     f err_drv
 

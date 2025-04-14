@@ -3,10 +3,9 @@ module Experiment1.Main where
 import Prelude
 
 import Control.Monad.Except (ExceptT, runExceptT, throwError)
-import Control.Monad.Reader (ReaderT, ask, local, runReaderT)
+import Control.Monad.Reader (ReaderT, ask, runReaderT)
 import Control.Monad.State (StateT, get, runStateT)
 import Control.Monad.Writer (WriterT, runWriterT)
-import Control.Plus (empty)
 import Data.Either.Nested (type (\/))
 import Data.Eq.Generic (genericEq)
 import Data.FoldableWithIndex (foldMapWithIndex)
@@ -19,10 +18,10 @@ import Data.Maybe (Maybe(..), maybe)
 import Data.Newtype (class Newtype, unwrap)
 import Data.Newtype as Newtype
 import Data.Tuple.Nested (type (/\))
+import Data.Unfoldable (none)
 import Effect (Effect)
 import Effect.Class.Console as Console
-import Partial.Unsafe (unsafeCrashWith)
-import Utility (fromMaybeM, todo)
+import Utility (fromMaybeM)
 
 --------------------------------------------------------------------------------
 -- main
@@ -145,7 +144,7 @@ extractType = go
 
 type BuildM a = ExceptT BuildErr (ReaderT BuildCtx (WriterT (Array BuildLog) (StateT BuildEnv Identity))) a
 
-type BuildDrv = BuildM Drv
+type BuildDrv = Ctx -> Maybe Goal -> BuildM Drv
 
 runBuildM
   :: forall a
@@ -153,18 +152,16 @@ runBuildM
   -> ((BuildErr \/ a) /\ Array BuildLog) /\ BuildEnv
 runBuildM m = m
   # runExceptT
-  # flip runReaderT
-      { gamma: mempty
-      , mb_goal: empty
-      }
+  # flip runReaderT {}
   # runWriterT
   # flip runStateT {}
   # unwrap
 
 type BuildCtx =
-  { gamma :: Ctx
-  , mb_goal :: Maybe Goal
-  }
+  -- { gamma :: Ctx
+  -- , mb_goal :: Maybe Goal
+  -- }
+  {}
 
 type BuildEnv =
   {
@@ -200,89 +197,82 @@ extractTypeM d = extractType d # fromMaybeM do
 --------------------------------------------------------------------------------
 
 var :: Var -> BuildDrv
-var x = do
-  ctx <- ask
-  ty <- lookup_Ctx x ctx.gamma # flip maybe (_.ty >>> pure) do
+var x gamma mb_goal = do
+  ty <- lookup_Ctx x gamma # flip maybe (_.ty >>> pure) do
     throwError_BuildM $ "scope error: variable " <> show x <> " is out-of-bounds"
-  ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
+  mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
     throwError_BuildM $ "type error: variable " <> show x <> " is expected to have type " <> show goal <> " but actually has type " <> show ty
-  pure $ VarDrv { gamma: ctx.gamma, ty } x
+  pure $ VarDrv { gamma: gamma, ty } x
 
 app :: BuildDrv -> BuildDrv -> BuildDrv
-app m_func m_arg = do
-  ctx <- ask
-  func <- local (_ { mb_goal = pure $ PiGoal }) m_func
+app build_func build_arg gamma mb_goal = do
+  func <- build_func gamma (pure PiGoal)
   { dom, cod } <- extractTypeM func >>= case _ of
     PiTerm dom cod -> pure { dom, cod }
     _ -> throwError_BuildM $ "type error: cannot apply " <> show func <> " since it's not a function"
-  arg <- local (_ { mb_goal = pure $ TermGoal dom }) m_arg
-  tm_arg <- extractTermM arg
-  ty_arg <- local (_ { mb_goal = pure $ TermGoal dom }) do extractTypeM arg
+  arg <- build_arg gamma (pure $ TermGoal dom)
+  tbuild_arg <- extractTermM arg
+  ty_arg <- extractTypeM arg
   unless (dom == ty_arg) do
     throwError_BuildM $ "type error: application of " <> show func <> " to argument " <> show arg <> " since the argument is expected to have type " <> show dom <> " but it actually has type " <> show ty_arg
-  let cod' = subst (Var 0) tm_arg cod
-  ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal cod') do
+  let cod' = subst (Var 0) tbuild_arg cod
+  mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal cod') do
     throwError_BuildM $ "type error: application of " <> show func <> " to an argument is expected to have type " <> show goal <> " but the function has codomain " <> show cod'
-  pure $ AppDrv { gamma: ctx.gamma, dom, cod: cod' } func arg
+  pure $ AppDrv { gamma: gamma, dom, cod: cod' } func arg
 
 lam :: BuildDrv -> BuildDrv -> BuildDrv
-lam m_dom m_b = do
-  ctx <- ask
-  domDrv <- local (_ { mb_goal = pure $ TermGoal UniTerm }) m_dom
+lam build_dom build_b gamma mb_goal = do
+  -- ctx <- ask
+  domDrv <- build_dom gamma (pure $ TermGoal UniTerm)
   dom <- extractTermM domDrv
-  goal_b <- case ctx.mb_goal of
+  goal_b <- case mb_goal of
     Just PiGoal -> pure Nothing
     Just (TermGoal (PiTerm a _b)) -> pure $ Just $ TermGoal a
     Just (TermGoal _) -> throwError_BuildM "type error: lam is expected to have non-pi type"
     _ -> pure Nothing
-  b <- local (_ { gamma = dom ▹ ctx.gamma, mb_goal = goal_b }) m_b
+  b <- build_b (dom ▹ gamma) goal_b
   cod <- extractTypeM b
-  case ctx.mb_goal of
+  case mb_goal of
     Just (TermGoal (PiTerm cod' dom')) -> do
       unless (dom == dom') do throwError_BuildM $ "type error: lam's dom is expected to be " <> show dom' <> " but it's actually " <> show dom
       unless (cod == cod') do throwError_BuildM $ "type error: lam's cod is expected to be " <> show cod' <> " but it's actually " <> show cod
     Just (TermGoal goal) -> throwError_BuildM $ "type error: lam is expected to have non-pi type: " <> show goal
     _ -> pure unit
-  pure $ LamDrv { gamma: ctx.gamma, dom, cod } b
+  pure $ LamDrv { gamma: gamma, dom, cod } b
 
 pi :: BuildDrv -> BuildDrv -> BuildDrv
-pi m_dom m_cod = do
-  ctx <- ask
+pi build_dom build_cod gamma mb_goal = do
   let ty = UniTerm
-  ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
+  mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
     throwError_BuildM $ "type error: pi is expected to have type " <> show goal <> " but actually has type " <> show ty
-  dom <- local (_ { mb_goal = pure $ TermGoal UniTerm }) m_dom
-  cod <- local (_ { gamma = UniTerm ▹ ctx.gamma, mb_goal = pure $ TermGoal UniTerm }) m_cod
-  pure $ PiDrv { gamma: ctx.gamma } dom cod
+  dom <- build_dom gamma (pure $ TermGoal UniTerm)
+  cod <- build_cod (UniTerm ▹ gamma) (pure $ TermGoal UniTerm)
+  pure $ PiDrv { gamma: gamma } dom cod
 
 uni :: BuildDrv
-uni = do
-  ctx <- ask
+uni gamma mb_goal = do
   let ty = UniTerm
-  ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
+  mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
     throwError_BuildM $ "type error: uni is expected to have type " <> show goal <> " but actually has type " <> show ty
-  pure $ UniDrv { gamma: ctx.gamma }
+  pure $ UniDrv { gamma: gamma }
 
 ann :: Term -> BuildDrv -> BuildDrv
-ann ty m_a = do
-  ctx <- ask
-  ctx.mb_goal # maybe (pure unit) case _ of
+ann ty build_a gamma mb_goal = do
+  mb_goal # maybe (pure unit) case _ of
     PiGoal | PiTerm _ _ <- ty -> throwError_BuildM $ "type error: ann is expected to have a pi type but actually has type " <> show ty
     TermGoal goal | goal /= ty -> throwError_BuildM $ "type error: ann is expected to have type " <> show goal <> " but actually has type " <> show ty
     _ -> pure unit
-  local (_ { mb_goal = pure $ TermGoal ty }) m_a
+  build_a gamma (pure $ TermGoal ty)
 
 hole :: String -> BuildDrv
-hole label = do
-  ctx <- ask
-  pure $ HoleDrv { gamma: ctx.gamma, goal: ctx.mb_goal, label }
+hole label gamma mb_goal = do
+  pure $ HoleDrv { gamma: gamma, goal: mb_goal, label }
 
 tactic :: Tactic -> Array BuildDrv -> BuildDrv
-tactic (Tactic t) args = do
-  ctx <- ask
-  drv <- t.call { gamma: ctx.gamma, mb_goal: ctx.mb_goal, args }
+tactic (Tactic t) args gamma mb_goal = do
+  drv <- t.build args gamma mb_goal
   ty <- extractTypeM drv
-  pure $ TacticDrv { gamma: ctx.gamma, ty } (Tactic t) drv
+  pure $ TacticDrv { gamma: gamma, ty } (Tactic t) drv
 
 --------------------------------------------------------------------------------
 -- Ctx
@@ -313,7 +303,7 @@ derive newtype instance Semigroup Ctx
 derive newtype instance Monoid Ctx
 
 cons_Ctx :: Term -> Ctx -> Ctx
-cons_Ctx ty (Ctx xs) = Ctx ({ tm: empty, ty } : xs)
+cons_Ctx ty (Ctx xs) = Ctx ({ tm: none, ty } : xs)
 
 infixr 6 cons_Ctx as ▹
 
@@ -339,12 +329,7 @@ derive newtype instance Eq Var
 
 newtype Tactic = Tactic
   { name :: String
-  , call ::
-      { gamma :: Ctx
-      , mb_goal :: Maybe Goal
-      , args :: Array BuildDrv
-      }
-      -> BuildDrv
+  , build :: Array BuildDrv -> BuildDrv
   }
 
 derive instance Generic Tactic _
@@ -362,7 +347,7 @@ instance Eq Tactic where
 assumption :: Tactic
 assumption = Tactic
   { name: "assumption"
-  , call: \{ gamma, mb_goal, args: _ } -> do
+  , build: \_args gamma mb_goal -> do
       ty_goal <- case mb_goal of
         Just (TermGoal ty) -> pure ty
         _ -> throwError_BuildM $ "assumption: invalid goal: " <> show mb_goal
