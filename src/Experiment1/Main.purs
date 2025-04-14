@@ -17,11 +17,12 @@ import Data.List (List(..), (:))
 import Data.List as List
 import Data.Maybe (Maybe(..), maybe)
 import Data.Newtype (class Newtype, unwrap)
+import Data.Newtype as Newtype
 import Data.Tuple.Nested (type (/\))
 import Effect (Effect)
 import Effect.Class.Console as Console
 import Partial.Unsafe (unsafeCrashWith)
-import Utility (fromMaybeM)
+import Utility (fromMaybeM, todo)
 
 --------------------------------------------------------------------------------
 -- main
@@ -59,6 +60,14 @@ appT f a = AppTerm f a
 lamT b = LamTerm b
 piT a b = PiTerm a b
 uniT = UniTerm
+
+subst :: Var -> Term -> Term -> Term
+subst x t (VarTerm y) | x == y = t
+subst _ _ (VarTerm y) | otherwise = VarTerm y
+subst x t (AppTerm f a) = AppTerm (subst x t f) (subst x t a)
+subst x t (LamTerm b) = LamTerm (subst (Newtype.modify (_ + 1) x) t b)
+subst x t (PiTerm a b) = PiTerm (subst x t a) (subst (Newtype.modify (_ + 1) x) t b)
+subst _ _ UniTerm = UniTerm
 
 --------------------------------------------------------------------------------
 -- Drv
@@ -207,10 +216,11 @@ app m_func m_arg = do
     PiTerm dom cod -> pure { dom, cod }
     _ -> throwError_BuildM $ "type error: cannot apply " <> show func <> " since it's not a function"
   arg <- local (_ { mb_goal = pure $ TermGoal dom }) m_arg
+  tm_arg <- extractTermM arg
   ty_arg <- local (_ { mb_goal = pure $ TermGoal dom }) do extractTypeM arg
   unless (dom == ty_arg) do
     throwError_BuildM $ "type error: application of " <> show func <> " to argument " <> show arg <> " since the argument is expected to have type " <> show dom <> " but it actually has type " <> show ty_arg
-  cod' <- unsafeCrashWith "TODO: substitute value of arg into cod" cod
+  let cod' = subst (Var 0) tm_arg cod
   ctx.mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal cod') do
     throwError_BuildM $ "type error: application of " <> show func <> " to an argument is expected to have type " <> show goal <> " but the function has codomain " <> show cod'
   pure $ AppDrv { gamma: ctx.gamma, dom, cod: cod' } func arg
