@@ -54,6 +54,12 @@ spec = describe "Experiment1" do
           )
     )
 
+  mkTest "(((λ (x : 𝒰) . x) 𝒰) :: 𝒰)"
+    (ann uniT (app (lam uni (var 0)) uni))
+    ( _ `shouldEqual` Right
+        (UniDrv { gamma: mempty })
+    )
+
   where
   mkTest label mdrv f = it label do
     let err_drv = runBuildM $ mdrv mempty none

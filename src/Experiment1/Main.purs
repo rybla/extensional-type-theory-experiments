@@ -188,11 +188,12 @@ app build_func build_arg gamma mb_goal = do
     PiTerm dom cod -> pure { dom, cod }
     _ -> throwError $ "type error: cannot apply " <> show func <> " since it's not a function"
   arg <- build_arg gamma (pure $ TermGoal dom)
-  tbuild_arg <- extractTermM arg
+  -- t_arg <- extractTermM arg
   ty_arg <- extractTypeM arg
   unless (dom == ty_arg) do
     throwError $ "type error: application of " <> show func <> " to argument " <> show arg <> " since the argument is expected to have type " <> show dom <> " but it actually has type " <> show ty_arg
-  let cod' = subst (Var 0) tbuild_arg cod
+  -- let cod' = subst (Var 0) t_arg cod
+  let cod' = cod
   mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal cod') do
     throwError $ "type error: application of " <> show func <> " to an argument is expected to have type " <> show goal <> " but the function has codomain " <> show cod'
   pure $ AppDrv { gamma: gamma, dom, cod: cod' } func arg
