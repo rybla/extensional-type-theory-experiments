@@ -13,7 +13,7 @@ import Data.Generic.Rep (class Generic)
 import Data.List (List(..), (:))
 import Data.List as List
 import Data.Maybe (Maybe(..), maybe)
-import Data.Newtype (class Newtype, unwrap)
+import Data.Newtype (class Newtype, unwrap, wrap)
 import Data.Newtype as Newtype
 import Data.Unfoldable (none)
 import Effect (Effect)
@@ -33,107 +33,145 @@ main = do
 --------------------------------------------------------------------------------
 
 data Term
-  = VarTerm Var
-  | AppTerm Term Term
-  | LamTerm Term
-  | PiTerm Term Term
-  | UniTerm
+  = VarT Var
+  | AppT Term Term
+  | LamT Term
+  | PiT Term Term
+  | UniT
+  | EqT Term Term
+  | ReflT
+  | AnyT
 
 derive instance Generic Term _
 
 instance Show Term where
-  show (VarTerm x) = show x
-  show (AppTerm f a) = "(" <> show f <> " " <> show a <> ")"
-  show (LamTerm b) = "(λ " <> show b <> ")"
-  show (PiTerm a b) = "(Π " <> show a <> " " <> show b <> ")"
-  show UniTerm = "𝒰"
+  show (VarT x) = show x
+  show (AppT f a) = "(" <> show f <> " " <> show a <> ")"
+  show (LamT b) = "(λ " <> show b <> ")"
+  show (PiT a b) = "(Π " <> show a <> " " <> show b <> ")"
+  show UniT = "𝒰"
+  show (EqT a b) = "(" <> show a <> " = " <> show b <> ")"
+  show ReflT = "refl"
+  show AnyT = "_"
 
 instance Eq Term where
   eq x = genericEq x
 
-varT i = VarTerm (Var i)
-appT f a = AppTerm f a
-lamT b = LamTerm b
-piT a b = PiTerm a b
-uniT = UniTerm
+varT i = VarT (wrap i)
+appT f a = AppT f a
+lamT b = LamT b
+piT a b = PiT a b
+uniT = UniT
+eqT a b = EqT a b
+reflT = ReflT
+anyT = AnyT
 
 subst :: Var -> Term -> Term -> Term
-subst x t (VarTerm y) | x == y = t
-subst _ _ (VarTerm y) | otherwise = VarTerm y
-subst x t (AppTerm f a) = AppTerm (subst x t f) (subst x t a)
-subst x t (LamTerm b) = LamTerm (subst (Newtype.modify (_ + 1) x) t b)
-subst x t (PiTerm a b) = PiTerm (subst x t a) (subst (Newtype.modify (_ + 1) x) t b)
-subst _ _ UniTerm = UniTerm
+subst x t (VarT y) | x == y = t
+subst _ _ (VarT y) | otherwise = VarT y
+subst x t (AppT f a) = AppT (subst x t f) (subst x t a)
+subst x t (LamT b) = LamT (subst (Newtype.modify (_ + 1) x) t b)
+subst x t (PiT a b) = PiT (subst x t a) (subst (Newtype.modify (_ + 1) x) t b)
+subst x t (EqT a b) = EqT (subst x t a) (subst x t b)
+subst _ _ ReflT = ReflT
+subst _ _ UniT = UniT
+subst _ _ AnyT = AnyT
+
+satisfies :: Term -> Term -> Boolean
+
+satisfies AnyT _ = false
+
+satisfies (VarT x) (VarT y) = x == y
+satisfies _ (VarT _) = false
+
+satisfies (AppT f a) (AppT f' a') = f `satisfies` f' && a `satisfies` a'
+satisfies _ (AppT _ _) = false
+
+satisfies (LamT b) (LamT b') = b `satisfies` b'
+satisfies _ (LamT _) = false
+
+satisfies (PiT a b) (PiT a' b') = a `satisfies` a' && b `satisfies` b'
+satisfies _ (PiT _ _) = false
+
+satisfies UniT UniT = true
+satisfies _ UniT = false
+
+satisfies (EqT a b) (EqT a' b') = a `satisfies` a' && b `satisfies` b'
+satisfies _ (EqT _ _) = false
+
+satisfies ReflT ReflT = true
+satisfies _ ReflT = false
+
+satisfies _ AnyT = true
 
 --------------------------------------------------------------------------------
 -- Drv
 --------------------------------------------------------------------------------
 
 data Drv
-  = VarDrv { gamma :: Ctx, ty :: Term } Var
-  | AppDrv { gamma :: Ctx, dom :: Term, cod :: Term } Drv Drv
-  | LamDrv { gamma :: Ctx, dom :: Term, cod :: Term } Drv
-  | PiDrv { gamma :: Ctx } Drv Drv
-  | UniDrv { gamma :: Ctx }
-  | AnnDrv { gamma :: Ctx, ty :: Term } Drv
-  | HoleDrv { gamma :: Ctx, goal :: Maybe Goal, label :: String }
-  | TacticDrv { gamma :: Ctx, ty :: Term } Tactic Drv
+  = Var { gamma :: Ctx, ty :: Term } Var
+  | App { gamma :: Ctx, dom :: Term, cod :: Term } Drv Drv
+  | Lam { gamma :: Ctx, dom :: Term, cod :: Term } Drv
+  | Pi { gamma :: Ctx } Drv Drv
+  | Uni { gamma :: Ctx }
+  | Eq { gamma :: Ctx } Drv Drv
+  | Refl { gamma :: Ctx, ty :: Term }
+  | Trans { gamma :: Ctx, ty0 :: Term, ty1 :: Term } Drv Drv
+  | Ann { gamma :: Ctx, ty :: Term } Drv
+  | Hole { gamma :: Ctx, goal :: Term, label :: String }
+  | Tactic { gamma :: Ctx, ty :: Term } Tactic Drv
 
 derive instance Generic Drv _
 
 _ShowDrv_show_extra_info = false
 
 instance Show Drv where
-  show (VarDrv r x) = (if _ShowDrv_show_extra_info then show r else "") <> show x
-  show (AppDrv r f a) = (if _ShowDrv_show_extra_info then show r else "") <> "(" <> show f <> " " <> show a <> ")"
-  show (LamDrv r b) = (if _ShowDrv_show_extra_info then show r else "") <> "(λ " <> show b <> ")"
-  show (PiDrv r dom cod) = (if _ShowDrv_show_extra_info then show r else "") <> "(Π " <> show dom <> " . " <> show cod <> ")"
-  show (UniDrv r) = (if _ShowDrv_show_extra_info then show r else "") <> "𝒰"
-  show (AnnDrv r a) = (if _ShowDrv_show_extra_info then show r else "") <> "(" <> show a <> " :: " <> show r.ty <> ")"
-  show (HoleDrv r) = (if _ShowDrv_show_extra_info then show r else "") <> "?" <> r.label
-  show (TacticDrv r (Tactic t) a) = (if _ShowDrv_show_extra_info then show r else "") <> "($" <> t.name <> " ==> " <> show a <> ")"
+  show (Var r x) = (if _ShowDrv_show_extra_info then show r else "") <> show x
+  show (App r f a) = (if _ShowDrv_show_extra_info then show r else "") <> "(" <> show f <> " " <> show a <> ")"
+  show (Lam r b) = (if _ShowDrv_show_extra_info then show r else "") <> "(λ " <> show b <> ")"
+  show (Pi r dom cod) = (if _ShowDrv_show_extra_info then show r else "") <> "(Π " <> show dom <> " . " <> show cod <> ")"
+  show (Uni r) = (if _ShowDrv_show_extra_info then show r else "") <> "𝒰"
+  show (Eq r a b) = (if _ShowDrv_show_extra_info then show r else "") <> "(" <> show a <> " = " <> show b <> ")"
+  show (Refl r) = (if _ShowDrv_show_extra_info then show r else "") <> "refl"
+  show (Trans r pf a) = (if _ShowDrv_show_extra_info then show r else "") <> "(trans " <> show pf <> " " <> show a <> ")"
+  show (Ann r a) = (if _ShowDrv_show_extra_info then show r else "") <> "(" <> show a <> " :: " <> show r.ty <> ")"
+  show (Hole r) = (if _ShowDrv_show_extra_info then show r else "") <> "?" <> r.label
+  show (Tactic r (MkTactic t) a) = (if _ShowDrv_show_extra_info then show r else "") <> "($" <> t.name <> " ==> " <> show a <> ")"
 
 instance Eq Drv where
-  eq x = genericEq x
-
-data Goal
-  = TermGoal Term
-  | PiGoal
-
-derive instance Generic Goal _
-
-instance Show Goal where
-  show (TermGoal t) = show t
-  show PiGoal = "(Π _ _)"
-
-instance Eq Goal where
   eq x = genericEq x
 
 extractTerm :: Drv -> Maybe Term
 extractTerm = go
   where
   go :: Drv -> Maybe Term
-  go (VarDrv _r x) = pure $ VarTerm x
-  go (AppDrv _r f a) = AppTerm <$> go f <*> (go a)
-  go (LamDrv _r b) = LamTerm <$> go b
-  go (PiDrv _r dom cod) = PiTerm <$> go dom <*> go cod
-  go (UniDrv _r) = pure UniTerm
-  go (AnnDrv _r a) = go a
-  go (HoleDrv _r) = Nothing
-  go (TacticDrv _r _t a) = extractTerm a
+  go (Var _r x) = pure $ VarT x
+  go (App _r f a) = AppT <$> go f <*> (go a)
+  go (Lam _r b) = LamT <$> go b
+  go (Pi _r dom cod) = PiT <$> go dom <*> go cod
+  go (Uni _r) = pure UniT
+  go (Eq _r a b) = EqT <$> go a <*> go b
+  go (Refl _r) = pure UniT
+  go (Trans _r _pf a) = extractTerm a
+  go (Ann _r a) = go a
+  go (Hole _r) = Nothing
+  go (Tactic _r _t a) = extractTerm a
 
 extractType :: Drv -> Maybe Term
 extractType = go
   where
   go :: Drv -> Maybe Term
-  go (VarDrv r _x) = pure r.ty
-  go (AppDrv r _f _a) = pure r.cod
-  go (LamDrv r _b) = pure $ PiTerm r.dom r.cod
-  go (PiDrv _r _dom _cod) = pure $ UniTerm
-  go (UniDrv _r) = pure $ UniTerm
-  go (AnnDrv r _a) = pure r.ty
-  go (HoleDrv _r) = Nothing
-  go (TacticDrv _r _t a) = extractType a
+  go (Var r _x) = pure r.ty
+  go (App r _f _a) = pure r.cod
+  go (Lam r _b) = pure $ piT r.dom r.cod
+  go (Pi _r _dom _cod) = pure uniT
+  go (Uni _r) = pure uniT
+  go (Eq _r _a _b) = pure uniT
+  go (Refl r) = pure $ eqT r.ty r.ty
+  go (Trans r _pf _a) = pure r.ty1
+  go (Ann r _a) = pure r.ty
+  go (Hole _r) = Nothing
+  go (Tactic _r _t a) = extractType a
 
 --------------------------------------------------------------------------------
 -- BuildM
@@ -141,7 +179,7 @@ extractType = go
 
 type BuildM = Process BuildErr (Array BuildLog) BuildCtx BuildEnv
 
-type BuildDrv = Ctx -> Maybe Goal -> BuildM Drv
+type BuildDrv = Ctx -> Term -> BuildM Drv
 
 runBuildM :: forall a. BuildM a -> Process.Error BuildErr (Array BuildLog) BuildEnv \/ a
 runBuildM m = m # runProcess ctx env
@@ -153,7 +191,6 @@ type BuildCtx = {}
 
 type BuildEnv = {}
 
--- type BuildErr = Process.Error String (Array BuildLog) BuildEnv
 type BuildErr = String
 
 type BuildLog =
@@ -174,83 +211,102 @@ extractTypeM d = extractType d # fromMaybeM do
 --------------------------------------------------------------------------------
 
 var :: Var -> BuildDrv
-var x gamma mb_goal = do
+var x gamma goal = do
   ty <- lookup_Ctx x gamma # flip maybe (_.ty >>> pure) do
     throwError $ "scope error: variable " <> show x <> " is out-of-bounds"
-  mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
+  unless (ty `satisfies` goal) do
     throwError $ "type error: variable " <> show x <> " is expected to have type " <> show goal <> " but actually has type " <> show ty
-  pure $ VarDrv { gamma: gamma, ty } x
+  pure $ Var { gamma: gamma, ty } x
 
 app :: BuildDrv -> BuildDrv -> BuildDrv
-app build_func build_arg gamma mb_goal = do
-  func <- build_func gamma (pure PiGoal)
+app build_func build_arg gamma goal = do
+  func <- build_func gamma (piT anyT anyT)
   { dom, cod } <- extractTypeM func >>= case _ of
-    PiTerm dom cod -> pure { dom, cod }
+    PiT dom cod -> pure { dom, cod }
     _ -> throwError $ "type error: cannot apply " <> show func <> " since it's not a function"
-  arg <- build_arg gamma (pure $ TermGoal dom)
-  -- t_arg <- extractTermM arg
+  arg <- build_arg gamma dom
+  t_arg <- extractTermM arg
   ty_arg <- extractTypeM arg
   unless (dom == ty_arg) do
     throwError $ "type error: application of " <> show func <> " to argument " <> show arg <> " since the argument is expected to have type " <> show dom <> " but it actually has type " <> show ty_arg
-  -- let cod' = subst (Var 0) t_arg cod
-  let cod' = cod
-  mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal cod') do
+  let cod' = subst (wrap 0) t_arg cod
+  unless (cod' `satisfies` goal) do
     throwError $ "type error: application of " <> show func <> " to an argument is expected to have type " <> show goal <> " but the function has codomain " <> show cod'
-  pure $ AppDrv { gamma: gamma, dom, cod: cod' } func arg
+  pure $ App { gamma: gamma, dom, cod: cod' } func arg
 
 lam :: BuildDrv -> BuildDrv -> BuildDrv
-lam build_dom build_b gamma mb_goal = do
-  -- ctx <- ask
-  domDrv <- build_dom gamma (pure $ TermGoal UniTerm)
+lam build_dom build_b gamma goal = do
+  domDrv <- build_dom gamma uniT
   dom <- extractTermM domDrv
-  goal_b <- case mb_goal of
-    Just PiGoal -> pure Nothing
-    Just (TermGoal (PiTerm a _b)) -> pure $ Just $ TermGoal a
-    Just (TermGoal _) -> throwError "type error: lam is expected to have non-pi type"
-    _ -> pure Nothing
+  goal_b <- case goal of
+    PiT a _b -> pure a
+    AnyT -> pure AnyT
+    _ -> throwError $ "type error: " <> show (lamT anyT) <> " cannot have type " <> show goal
   b <- build_b (dom ▹ gamma) goal_b
   cod <- extractTypeM b
-  case mb_goal of
-    Just (TermGoal (PiTerm cod' dom')) -> do
-      unless (dom == dom') do throwError $ "type error: lam's dom is expected to be " <> show dom' <> " but it's actually " <> show dom
-      unless (cod == cod') do throwError $ "type error: lam's cod is expected to be " <> show cod' <> " but it's actually " <> show cod
-    Just (TermGoal goal) -> throwError $ "type error: lam is expected to have non-pi type: " <> show goal
-    _ -> pure unit
-  pure $ LamDrv { gamma: gamma, dom, cod } b
+  let ty = PiT cod dom
+  unless (ty `satisfies` goal) do
+    throwError $ "type error: " <> show (lamT anyT) <> " is expected to type " <> show goal <> " but actually has type " <> show ty
+  pure $ Lam { gamma: gamma, dom, cod } b
 
 pi :: BuildDrv -> BuildDrv -> BuildDrv
-pi build_dom build_cod gamma mb_goal = do
-  let ty = UniTerm
-  mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
-    throwError $ "type error: pi is expected to have type " <> show goal <> " but actually has type " <> show ty
-  dom <- build_dom gamma (pure $ TermGoal UniTerm)
-  cod <- build_cod (UniTerm ▹ gamma) (pure $ TermGoal UniTerm)
-  pure $ PiDrv { gamma: gamma } dom cod
+pi build_dom build_cod gamma goal = do
+  let ty = UniT
+  unless (ty `satisfies` goal) do
+    throwError $ "type error: " <> show (piT anyT anyT) <> " is expected to have type " <> show goal <> " but actually has type " <> show ty
+  dom <- build_dom gamma uniT
+  cod <- build_cod (uniT ▹ gamma) uniT
+  pure $ Pi { gamma: gamma } dom cod
 
 uni :: BuildDrv
-uni gamma mb_goal = do
-  let ty = UniTerm
-  mb_goal # maybe (pure unit) \goal -> unless (goal == TermGoal ty) do
-    throwError $ "type error: uni is expected to have type " <> show goal <> " but actually has type " <> show ty
-  pure $ UniDrv { gamma: gamma }
+uni gamma goal = do
+  let ty = UniT
+  unless (uniT `satisfies` goal) do
+    throwError $ "type error: " <> show uniT <> " is expected to have type " <> show goal <> " but actually has type " <> show ty
+  pure $ Uni { gamma: gamma }
 
-ann :: Term -> BuildDrv -> BuildDrv
-ann ty build_a gamma mb_goal = do
-  mb_goal # maybe (pure unit) case _ of
-    PiGoal | PiTerm _ _ <- ty -> throwError $ "type error: ann is expected to have a pi type but actually has type " <> show ty
-    TermGoal goal | goal /= ty -> throwError $ "type error: ann is expected to have type " <> show goal <> " but actually has type " <> show ty
-    _ -> pure unit
-  build_a gamma (pure $ TermGoal ty)
+eq :: BuildDrv -> BuildDrv -> BuildDrv
+eq build_a build_b gamma goal = do
+  let ty = uniT
+  unless (ty `satisfies` goal) do
+    throwError $ "type error: " <> show (eqT anyT anyT) <> " is expected to have type " <> show goal <> " but actually has type " <> show ty
+  a <- build_a gamma anyT
+  b <- build_b gamma anyT
+  pure $ Eq { gamma } a b
+
+refl :: BuildDrv
+refl gamma goal = do
+  a <- case goal of
+    EqT a b -> do
+      unless (a == b) do
+        throwError $ "type error: " <> show reflT <> " is expected to have type " <> show goal <> ", but " <> show a <> " /= " <> show b
+      pure a
+    _ -> throwError $ "type errro: " <> show reflT <> " is expected to have non-equality type " <> show goal
+  pure $ Refl { gamma, ty: a }
+
+trans :: BuildDrv -> BuildDrv -> BuildDrv
+trans build_pf build_a gamma goal = do
+  a <- build_a gamma anyT
+  ty_a <- extractTypeM a
+  pf <- build_pf gamma (eqT ty_a goal)
+  pure $ Trans { gamma, ty0: ty_a, ty1: goal } pf a
+
+ann :: BuildDrv -> Term -> BuildDrv
+ann build_a ty gamma goal = do
+  unless (ty `satisfies` goal) do
+    throwError $ "type error: a term is expected have type " <> show goal <> " but is annotated to have type " <> show ty
+  a <- build_a gamma ty
+  pure $ Ann { gamma, ty } a
 
 hole :: String -> BuildDrv
-hole label gamma mb_goal = do
-  pure $ HoleDrv { gamma: gamma, goal: mb_goal, label }
+hole label gamma goal = do
+  pure $ Hole { gamma: gamma, goal: goal, label }
 
 tactic :: Tactic -> Array BuildDrv -> BuildDrv
-tactic (Tactic t) args gamma mb_goal = do
-  drv <- t.build args gamma mb_goal
+tactic (MkTactic t) args gamma goal = do
+  drv <- t.build args gamma goal
   ty <- extractTypeM drv
-  pure $ TacticDrv { gamma: gamma, ty } (Tactic t) drv
+  pure $ Tactic { gamma: gamma, ty } (wrap t) drv
 
 --------------------------------------------------------------------------------
 -- Ctx
@@ -266,7 +322,7 @@ instance Show Ctx where
   show (Ctx ctx) = ctx # mapWithIndex f # List.intercalate ", "
     where
     f i x =
-      "(" <> show (Var i)
+      "(" <> show (wrap i :: Var)
         <>
           ( case x.tm of
               Nothing -> " : " <> show x.ty
@@ -286,18 +342,18 @@ cons_Ctx ty (Ctx xs) = Ctx ({ tm: none, ty } : xs)
 infixr 6 cons_Ctx as ▹
 
 lookup_Ctx :: Var -> Ctx -> Maybe CtxItem
-lookup_Ctx (Var i) (Ctx xs) = xs List.!! i
+lookup_Ctx (MkVar i) (Ctx xs) = xs List.!! i
 
 --------------------------------------------------------------------------------
 -- Var
 --------------------------------------------------------------------------------
 
-newtype Var = Var Int
+newtype Var = MkVar Int
 
 derive instance Newtype Var _
 
 instance Show Var where
-  show (Var i) = "#" <> show i
+  show (MkVar i) = "#" <> show i
 
 derive newtype instance Eq Var
 
@@ -305,7 +361,7 @@ derive newtype instance Eq Var
 -- Tactic
 --------------------------------------------------------------------------------
 
-newtype Tactic = Tactic
+newtype Tactic = MkTactic
   { name :: String
   , build :: Array BuildDrv -> BuildDrv
   }
@@ -315,7 +371,7 @@ derive instance Generic Tactic _
 derive instance Newtype Tactic _
 
 instance Eq Tactic where
-  eq (Tactic t1) (Tactic t2) = t1.name == t2.name
+  eq (MkTactic t1) (MkTactic t2) = t1.name == t2.name
 
 --------------------------------------------------------------------------------
 -- Tactic Examples
@@ -323,18 +379,16 @@ instance Eq Tactic where
 
 -- | Finds the first thing in context that satisfies the goal.
 assumption :: Tactic
-assumption = Tactic
+assumption = wrap
   { name: "assumption"
-  , build: \_args gamma mb_goal -> do
-      ty_goal <- case mb_goal of
-        Just (TermGoal ty) -> pure ty
-        _ -> throwError $ "assumption: invalid goal: " <> show mb_goal
+  , build: \_args gamma goal -> do
       let
-        candidates = unwrap gamma # foldMapWithIndex \i x ->
-          if x.ty == ty_goal then pure (Var i) else mempty
+        candidates = unwrap gamma # foldMapWithIndex \i -> case _ of
+          x | x.ty `satisfies` goal -> pure { var: wrap i, ty: x.ty }
+          _ -> mempty
       x <- case List.head candidates of
         Nothing -> throwError $ "assumption: no candidates"
         Just x -> pure x
-      pure $ VarDrv { gamma, ty: ty_goal } x
+      pure $ Var { gamma, ty: x.ty } x.var
   }
 
