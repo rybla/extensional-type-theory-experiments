@@ -2,7 +2,6 @@ module Experiment1.Main where
 
 import Prelude
 
-import Control.Applicative (pure)
 import Control.Monad.Except (throwError)
 import Control.Monad.Process (Process, runProcess)
 import Control.Monad.Process as Process
@@ -14,7 +13,7 @@ import Data.FunctorWithIndex (mapWithIndex)
 import Data.Generic.Rep (class Generic)
 import Data.List (List(..), (:))
 import Data.List as List
-import Data.Maybe (Maybe(..), maybe)
+import Data.Maybe (Maybe(..))
 import Data.Newtype (class Newtype, unwrap, wrap)
 import Data.Newtype as Newtype
 import Data.Unfoldable (none)
@@ -85,7 +84,7 @@ weakenVar :: Var -> Var
 weakenVar = Newtype.modify (_ + 1)
 
 weaken :: Term -> Term
-weaken (VarT x) = VarT (x # Newtype.modify (_ + 1))
+weaken (VarT x) = VarT (x # weakenVar)
 weaken (AppT f a) = AppT (weaken f) (weaken a)
 weaken (LamT b) = LamT (weaken b)
 weaken (PiT a b) = PiT (weaken a) (weaken b)

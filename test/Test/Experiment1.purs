@@ -80,7 +80,7 @@ spec = describe "Experiment1" do
             (Uni { gamma: ε })
     )
 
-  mkTest "(λ (A : 𝒰) . λ (x : A#0) . x#0) 𝒰 𝒰 :: 𝒰"
+  mkTest "(λ (A : 𝒰) . λ (x : A) . x) 𝒰 𝒰 :: 𝒰"
     (app' (lam' [ uni, var 0 ] (var 0)) [ uni, uni ] `ann` uniT)
     ( _ `shouldEqual` Right do
         Ann { gamma: ε, ty: uniT } $
