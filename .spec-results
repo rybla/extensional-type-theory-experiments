@@ -21,6 +21,27 @@
     }
   ],
   [
+    "Experiment1 (λ (A : 𝒰) . λ (x : A#0) . x#0) 𝒰 𝒰 :: 𝒰",
+    {
+      "timestamp": "1744816535885.0",
+      "success": true
+    }
+  ],
+  [
+    "Experiment1 (λ (A : 𝒰) . λ (x : A) . x) 𝒰 𝒰 :: 𝒰",
+    {
+      "timestamp": "1744815258026.0",
+      "success": false
+    }
+  ],
+  [
+    "Experiment1 (λ (A : 𝒰) . λ (x : A) . x) 𝒰 𝒰 :: 𝒰)",
+    {
+      "timestamp": "1744814347789.0",
+      "success": true
+    }
+  ],
+  [
     "Experiment1 (λ (x : 𝒰) . ($assumption :: 𝒰))",
     {
       "timestamp": "1744747529342.0",
@@ -56,6 +77,20 @@
     }
   ],
   [
+    "Experiment1 (λ (x : 𝒰) . x) 𝒰",
+    {
+      "timestamp": "1744816535885.0",
+      "success": true
+    }
+  ],
+  [
+    "Experiment1 (λ (x : 𝒰) . x) 𝒰 :: 𝒰",
+    {
+      "timestamp": "1744816535885.0",
+      "success": true
+    }
+  ],
+  [
     "Experiment1 ex1",
     {
       "timestamp": "1744402922348.0",
@@ -66,6 +101,34 @@
     "Experiment1 ex2",
     {
       "timestamp": "1744402922348.0",
+      "success": true
+    }
+  ],
+  [
+    "Experiment1 trans refl 𝒰 :: 𝒰",
+    {
+      "timestamp": "1744816535885.0",
+      "success": true
+    }
+  ],
+  [
+    "Experiment1 λ (x : 𝒰) . ($assumption :: 𝒰)",
+    {
+      "timestamp": "1744816535885.0",
+      "success": true
+    }
+  ],
+  [
+    "Experiment1 λ (x : 𝒰) . x",
+    {
+      "timestamp": "1744816535885.0",
+      "success": true
+    }
+  ],
+  [
+    "Experiment1 λ (x : 𝒰) . λ (y : Π 𝒰 𝒰) . ($assumption :: 𝒰)",
+    {
+      "timestamp": "1744816535885.0",
       "success": true
     }
   ]

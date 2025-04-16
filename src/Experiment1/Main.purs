@@ -2,9 +2,11 @@ module Experiment1.Main where
 
 import Prelude
 
+import Control.Applicative (pure)
 import Control.Monad.Except (throwError)
 import Control.Monad.Process (Process, runProcess)
 import Control.Monad.Process as Process
+import Data.Array as Array
 import Data.Either.Nested (type (\/))
 import Data.Eq.Generic (genericEq)
 import Data.FoldableWithIndex (foldMapWithIndex)
@@ -67,15 +69,30 @@ reflT = ReflT
 anyT = AnyT
 
 subst :: Var -> Term -> Term -> Term
-subst x t (VarT y) | x == y = t
-subst _ _ (VarT y) | otherwise = VarT y
+subst x t (VarT y)
+  | x < y = VarT (y # weakenVar)
+  | x == y = t
+  | otherwise = VarT y
 subst x t (AppT f a) = AppT (subst x t f) (subst x t a)
-subst x t (LamT b) = LamT (subst (Newtype.modify (_ + 1) x) t b)
-subst x t (PiT a b) = PiT (subst x t a) (subst (Newtype.modify (_ + 1) x) t b)
+subst x t (LamT b) = LamT (subst (x # weakenVar) t b)
+subst x t (PiT a b) = PiT (subst x t a) (subst (x # weakenVar) t b)
 subst x t (EqT a b) = EqT (subst x t a) (subst x t b)
 subst _ _ ReflT = ReflT
 subst _ _ UniT = UniT
 subst _ _ AnyT = AnyT
+
+weakenVar :: Var -> Var
+weakenVar = Newtype.modify (_ + 1)
+
+weaken :: Term -> Term
+weaken (VarT x) = VarT (x # Newtype.modify (_ + 1))
+weaken (AppT f a) = AppT (weaken f) (weaken a)
+weaken (LamT b) = LamT (weaken b)
+weaken (PiT a b) = PiT (weaken a) (weaken b)
+weaken UniT = UniT
+weaken (EqT a b) = EqT (weaken a) (weaken b)
+weaken ReflT = ReflT
+weaken AnyT = AnyT
 
 satisfies :: Term -> Term -> Boolean
 
@@ -123,7 +140,7 @@ data Drv
 
 derive instance Generic Drv _
 
-_ShowDrv_show_extra_info = false
+_ShowDrv_show_extra_info = true
 
 instance Show Drv where
   show (Var r x) = (if _ShowDrv_show_extra_info then show r else "") <> show x
@@ -210,10 +227,10 @@ extractTypeM d = extractType d # fromMaybeM do
 -- BuildDrv
 --------------------------------------------------------------------------------
 
-var :: Var -> BuildDrv
-var x gamma goal = do
-  ty <- lookup_Ctx x gamma # flip maybe (_.ty >>> pure) do
-    throwError $ "scope error: variable " <> show x <> " is out-of-bounds"
+var :: Int -> BuildDrv
+var i gamma goal = do
+  let x = wrap i :: Var
+  { ty } <- gamma # lookupVarM x
   unless (ty `satisfies` goal) do
     throwError $ "type error: variable " <> show x <> " is expected to have type " <> show goal <> " but actually has type " <> show ty
   pure $ Var { gamma: gamma, ty } x
@@ -234,6 +251,11 @@ app build_func build_arg gamma goal = do
     throwError $ "type error: application of " <> show func <> " to an argument is expected to have type " <> show goal <> " but the function has codomain " <> show cod'
   pure $ App { gamma: gamma, dom, cod: cod' } func arg
 
+app' :: BuildDrv -> Array BuildDrv -> BuildDrv
+app' build_f build_as = case Array.uncons build_as of
+  Nothing -> build_f
+  Just { head: build_a, tail: build_as' } -> app' (app build_f build_a) build_as'
+
 lam :: BuildDrv -> BuildDrv -> BuildDrv
 lam build_dom build_b gamma goal = do
   domDrv <- build_dom gamma uniT
@@ -248,6 +270,11 @@ lam build_dom build_b gamma goal = do
   unless (ty `satisfies` goal) do
     throwError $ "type error: " <> show (lamT anyT) <> " is expected to type " <> show goal <> " but actually has type " <> show ty
   pure $ Lam { gamma: gamma, dom, cod } b
+
+lam' :: Array BuildDrv -> BuildDrv -> BuildDrv
+lam' build_doms build_b = case Array.uncons build_doms of
+  Nothing -> build_b
+  Just { head: build_dom, tail: build_doms' } -> lam build_dom (lam' build_doms' build_b)
 
 pi :: BuildDrv -> BuildDrv -> BuildDrv
 pi build_dom build_cod gamma goal = do
@@ -313,7 +340,7 @@ tactic (MkTactic t) args gamma goal = do
 --------------------------------------------------------------------------------
 
 newtype Ctx = Ctx (List CtxItem)
-type CtxItem = { tm :: Maybe Term, ty :: Term }
+type CtxItem = { mb_tm :: Maybe Term, ty :: Term }
 
 derive instance Newtype Ctx _
 
@@ -324,7 +351,7 @@ instance Show Ctx where
     f i x =
       "(" <> show (wrap i :: Var)
         <>
-          ( case x.tm of
+          ( case x.mb_tm of
               Nothing -> " : " <> show x.ty
               Just tm -> " = " <> show tm <> " : " <> show x.ty
           )
@@ -336,13 +363,22 @@ derive newtype instance Semigroup Ctx
 
 derive newtype instance Monoid Ctx
 
-cons_Ctx :: Term -> Ctx -> Ctx
-cons_Ctx ty (Ctx xs) = Ctx ({ tm: none, ty } : xs)
+weakenCtxItem :: CtxItem -> CtxItem
+weakenCtxItem x = { mb_tm: x.mb_tm <#> weaken, ty: x.ty # weaken }
 
-infixr 6 cons_Ctx as ▹
+consCtx :: Term -> Ctx -> Ctx
+consCtx ty (Ctx xs) = Ctx ({ mb_tm: none, ty } : xs)
 
-lookup_Ctx :: Var -> Ctx -> Maybe CtxItem
-lookup_Ctx (MkVar i) (Ctx xs) = xs List.!! i
+infixr 6 consCtx as ▹
+
+lookupVar :: Var -> Ctx -> Maybe CtxItem
+lookupVar (MkVar 0) (Ctx (x : _)) = Just (x # weakenCtxItem)
+lookupVar (MkVar _) (Ctx Nil) = Nothing
+lookupVar x (Ctx (_ : xs)) = lookupVar x (Ctx (xs <#> weakenCtxItem))
+
+lookupVarM :: Var -> Ctx -> BuildM CtxItem
+lookupVarM x ctx = ctx # lookupVar x # fromMaybeM do
+  throwError $ "scope error: variable " <> show x <> " is out-of-bounds"
 
 --------------------------------------------------------------------------------
 -- Var
@@ -356,6 +392,8 @@ instance Show Var where
   show (MkVar i) = "#" <> show i
 
 derive newtype instance Eq Var
+
+derive newtype instance Ord Var
 
 --------------------------------------------------------------------------------
 -- Tactic
